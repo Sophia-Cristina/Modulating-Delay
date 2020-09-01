@@ -31,7 +31,7 @@ public:
 
     // WAVETABLES:
     int TableSize = 256;
-    std::vector<float> SineWave = std::vector<float>::vector(TableSize);
+    std::vector<float> WaveTable = std::vector<float>::vector(TableSize);
     int CntTable = 0;
 
     // OPTIONS:
@@ -39,7 +39,7 @@ public:
 
     DelayClass()
     {
-        for (int n = 0; n < SineWave.size(); ++n) { SineWave[n] = sin((6.283185 * n) / SineWave.size()); }
+        for (int n = 0; n < WaveTable.size(); ++n) { WaveTable[n] = sin((6.283185 * n) / WaveTable.size()); }
     }
 
     ~DelayClass() override
@@ -53,28 +53,34 @@ public:
     float ModulateNum()
     {
         CntTable += WritePos;
-        int SamplesInFreq = SampleRate / Omega;
-        while (CntTable > SamplesInFreq) { CntTable -= SamplesInFreq; }
-        int WavePos = round((CntTable / SamplesInFreq) * (TableSize - 1));
-        return(((SineWave[WavePos]) + FloorNum) * MultiNum);
+        int SamplesInCycle = SampleRate / Omega;
+        while (CntTable > SamplesInCycle) { CntTable -= SamplesInCycle; }
+        int WavePos = round((CntTable / SamplesInCycle) * (TableSize - 1));
+        return(((WaveTable[WavePos]) + FloorNum) * MultiNum);
     }
 
     void FillDelayBuffer(int channel, const int BFDataSize, const int DelayBFDataSize, const float* BFDataReadPointer, const float* DelayBFDataReadPointer)
     {
         int NumSamples = BFDataSize;
         float* WritePointer = DelayBuffer.getWritePointer(channel);
+        int SamplesInCycle = SampleRate / Omega;
+        while (CntTable > SamplesInCycle) { CntTable -= SamplesInCycle; } // Por pelo processador se ficar muito pesado.
+        //float x = (Omega * 6.283185) / SamplesInCycle; // VER SE OMEGA PODE SER MODIFICADO DURANTE, MAS ACHO QUE QUANDO A FUNÇÃO É CHAMADA, JÁ ERA!
+
+
         if (DelayBFDataSize > BFDataSize + WritePos)
         {
             if (NumSamples > 0)
             {
-                //const auto increment = (endGain - startGain) / BFDataSize;
                 float* d = WritePointer + WritePos;
 
                 while (--NumSamples >= 0)
                 {
-                    *d++ = FeedBNum * (sin((Omega * 6.283185 * (WritePos + NumSamples)) / SampleRate) + FloorNum) * MultiNum * *BFDataReadPointer++;
+                    int WavePos = round((CntTable / SamplesInCycle) * TableSize);
+                    *d++ = FeedBNum * (WaveTable[WavePos % TableSize] + FloorNum) * MultiNum * *BFDataReadPointer++;
                 }
             }
+            CntTable += BFDataSize;
             //DelayBuffer.copyFromWithRamp(channel, WritePos, BFDataReadPointer, BFDataSize, ModFB, ModFB);
         }
         else
@@ -88,11 +94,13 @@ public:
 
                 while (--NumSamples >= 0)
                 {
-                    *d++ = FeedBNum * (sin((Omega * 6.283185 * (WritePos + NumSamples)) / SampleRate) + FloorNum) * MultiNum * *BFDataReadPointer++;
+                    int WavePos = round((CntTable / SamplesInCycle) * TableSize);
+                    *d++ = FeedBNum * (WaveTable[WavePos % TableSize] + FloorNum) * MultiNum * *BFDataReadPointer++;
                 }
+                CntTable += BFRemaining;
             }
             //DelayBuffer.copyFromWithRamp(channel, WritePos, BFDataReadPointer, BFRemaining, ModFB, ModFB);
-            NumSamples = BFDataSize - BFRemaining;
+            NumSamples = BFDataSize + BFRemaining; // + = the commented fix | - = TAP original
             if (NumSamples > 0)
             {
                 //const auto increment = (endGain - startGain) / BFDataSize;
@@ -100,9 +108,12 @@ public:
 
                 while (--NumSamples >= 0)
                 {
-                    *d++ = FeedBNum * (sin((Omega * 6.283185 * NumSamples) / SampleRate) + FloorNum) * MultiNum * *BFDataReadPointer++;
+                    int WavePos = round((CntTable / SamplesInCycle) * TableSize);
+                    *d++ = FeedBNum * (WaveTable[WavePos % TableSize] + FloorNum) * MultiNum * *BFDataReadPointer++;
                 }
+                CntTable += BFDataSize + BFRemaining; // + = the commented fix | - = TAP original | DON'T FORGET TO MODIFY THIS
             }
+            
             //DelayBuffer.copyFromWithRamp(channel, 0, BFDataReadPointer, BFDataSize - BFRemaining, ModFB, ModFB);
             //DelayBuffer.copyFromWithRamp(channel, 0, BFDataReadPointer, BFDataSize + BFRemaining, 0.8, 0.8); // If you hear cracks, this is a fix by a user in the comment section of The Audio Programmer tuto 40
         }
@@ -112,7 +123,8 @@ public:
     {
         // DelayBFDataSize is just the DelayBFSize, but to not mix both togheter, the data in DataSize means that is gathered from the processblock method.
         // static_cast<int> is equal to doing (int)1.0!
-        const int ReadPos = static_cast<int> (DelayBFDataSize + WritePos - (ModMS * SamplesinMS)) % DelayBFDataSize;
+        //const int ReadPos = static_cast<int> (DelayBFDataSize + WritePos - (ModMS * SamplesinMS)) % DelayBFDataSize; // REMEMBE TO PUT IT BACK
+        const int ReadPos = static_cast<int> (DelayBFDataSize + WritePos - (MSNum * SamplesinMS)) % DelayBFDataSize;
 
         if (DelayBFDataSize > BFDataSize + ReadPos) { buffer.copyFrom(channel, 0, DelayBFDataReadPointer + ReadPos, BFDataSize); }
         else
